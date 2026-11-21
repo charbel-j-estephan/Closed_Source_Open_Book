@@ -25,9 +25,13 @@ where it fails.
 - **P1** `src/p1_license_*.c` — license validator (XOR-sum of the password
   compared against `0x3F7`).
 - **P2** `src/p2_collatz_*.c` — Collatz stopping-time computer (`3n+1`).
+- **P3** `src/p3_hash_*.c` — djb2 hash key check (seed `5381`, target constant).
+- **P4** `src/p4_serial_*.c` — eight-digit serial validator with a mod-10 check
+  digit (branch-heavy).
 
 Each has an `L0` (readable) and an `L2` (obfuscated) source; `L1` is `L0`
-compiled with optimization and stripped.
+compiled with optimization and stripped. `pack.sh` adds an optional `L3` packing
+level with UPX if the packer is installed locally.
 
 ## Reproduce
 

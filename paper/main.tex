@@ -58,7 +58,7 @@ a practical question for software protection: can an executable be made hard
 for an AI system to understand? We argue that ``AI resistance'' is not a new
 attack surface but a degradation of the same artifacts a human analyst
 consumes, namely symbols, strings, data constants, and recoverable control
-flow. We build a small, reproducible testbed of two C programs with known
+flow. We build a small, reproducible testbed of four C programs with known
 ground truth, apply three cumulative protection levels (none; symbol stripping
 with compiler optimization; manual control-flow flattening with opaque
 predicates and string encryption), and measure how much of each program's
@@ -308,9 +308,11 @@ empirical finding.
 
 \section{Methodology}\label{sec:method}
 \subsection{Samples and Ground Truth}
-We use two small C programs chosen so that their behavior is crisp and
-independently checkable, which lets us score recovery objectively.
-Listing~\ref{lst:p1} and Listing~\ref{lst:p2} give the unprotected sources.
+We use four small C programs chosen so that their behavior is crisp and
+independently checkable, which lets us score recovery objectively. The set spans
+the two things developers actually protect, a hidden value and a hidden
+algorithm, and spans both arithmetic-heavy and branch-heavy code.
+Listing~\ref{lst:p1} and Listing~\ref{lst:p2} give two of the unprotected sources.
 \begin{itemize}
 \item \textbf{P1 (license validator).} Reads a password, XORs each character with
 the constant \texttt{0x5A}, sums the results, and grants access iff the sum
@@ -319,7 +321,18 @@ equals \texttt{0x3F7} (1015). It prints \texttt{ACCESS GRANTED} or
 \item \textbf{P2 (Collatz stopping time).} Reads an integer $n$ and applies the
 Collatz map ($n/2$ if even, $3n+1$ if odd) until $n=1$, printing the number of
 steps. Ground truth: the Collatz identity and its branch structure.
+\item \textbf{P3 (djb2 hash key check).} Computes the djb2 string hash of the
+input (seed \texttt{5381}, multiplier $33$ via \texttt{(h<<5)+h}) and grants iff
+it equals a target constant. Ground truth: the djb2 algorithm, its seed, and the
+target. This tests recovery of a recognizable named algorithm.
+\item \textbf{P4 (serial validator).} Accepts an eight-digit serial whose last
+digit is the mod-10 check digit of the first seven. Ground truth: the length and
+digit checks and the mod-10 rule. This is deliberately branch-heavy, to stress
+control-flow flattening.
 \end{itemize}
+P1 and P3 protect a secret \emph{value} (a key); P2 and P3 protect a secret
+\emph{algorithm}; P4 protects branch-heavy validation \emph{logic}. Together they
+let us ask whether the recovery trends hold across code of different shape.
 
 \begin{lstlisting}[style=ccode,caption={P1 license validator (unprotected).},label={lst:p1}]
 static int validate(const char *pw) {
@@ -408,23 +421,61 @@ model-independent, anchor the subjective scores.
 
 \section{Evaluation}\label{sec:eval}
 \subsection{Static Indicators}
-Table~\ref{tab:static} reports the static measurements. Symbol stripping at L1
-removes all 33 user-visible symbols. String encryption at L2 is the only
-technique that removes the plaintext secret output: \texttt{strings} finds
-\texttt{ACCESS GRANTED}/\texttt{ACCESS DENIED} at L0 and L1 but not at L2.
+Table~\ref{tab:static} reports the static measurements across all four programs.
+Symbol stripping at L1 removes every user-visible symbol (32--33 per program).
+String encryption at L2 is the only technique that removes the plaintext secret
+output: \texttt{strings} finds the decision messages (\texttt{ACCESS GRANTED},
+\texttt{VALID KEY}, \texttt{SERIAL OK}, and their negatives) at L0 and L1 but not
+at L2. P2 prints only a number and so has no secret string to leak (``n/a'').
 
 \begin{table}[t]
-\caption{Static protection indicators (P1 / P2).}
+\caption{Static protection indicators per program and level.}
 \label{tab:static}
 \centering
 \footnotesize
-\begin{tabular}{@{}lcccc@{}}
+\begin{tabular}{@{}llcccc@{}}
 \toprule
-\textbf{Level} & \textbf{Symbols} & \textbf{Strings} & \textbf{Plaintext secret} & \textbf{Size (B)} \\
+\textbf{Prog} & \textbf{Level} & \textbf{Symbols} & \textbf{Strings} & \textbf{Secret str.} & \textbf{Size (B)} \\
 \midrule
-L0 (none)      & 33 & 80 / 79 & yes & 16088 / 16096 \\
-L1 (strip+opt) & 0  & 46 / 45 & yes & 14472 \\
-L2 (obfuscated)& 0  & 52 / 46 & no  & 14472 \\
+P1 & L0 & 33 & 80 & yes & 16088 \\
+P1 & L1 & 0  & 46 & yes & 14472 \\
+P1 & L2 & 0  & 52 & no  & 14472 \\
+P2 & L0 & 33 & 79 & n/a & 16096 \\
+P2 & L1 & 0  & 45 & n/a & 14472 \\
+P2 & L2 & 0  & 46 & n/a & 14472 \\
+P3 & L0 & 32 & 79 & yes & 16040 \\
+P3 & L1 & 0  & 44 & yes & 14472 \\
+P3 & L2 & 0  & 47 & no  & 14472 \\
+P4 & L0 & 33 & 81 & yes & 16080 \\
+P4 & L1 & 0  & 47 & yes & 14472 \\
+P4 & L2 & 0  & 53 & no  & 14472 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Control-Flow Complexity}
+Table~\ref{tab:cfg} reports a control-flow complexity proxy: the mean number of
+conditional branches, unconditional jumps, and indirect jumps per binary at each
+level. Because the libc startup code is identical across levels for a given
+program, increases reflect the user code. Flattening at L2 raises every measure,
+most visibly the indirect-jump count, which rises because the compiler lowers the
+state dispatcher to a jump table. The branch-heavy P4 shows the largest jump,
+from 17 to 24 unconditional jumps between L0 and L2. This is the objective,
+model-independent signature of the structural damage that drives the purpose-recovery
+drop in the next subsection.
+
+\begin{table}[t]
+\caption{Control-flow complexity (mean per binary over the four programs).}
+\label{tab:cfg}
+\centering
+\footnotesize
+\begin{tabular}{@{}lccc@{}}
+\toprule
+\textbf{Level} & \textbf{Cond.\ branches} & \textbf{Uncond.\ jumps} & \textbf{Indirect jumps} \\
+\midrule
+L0 (none)       & 11.3 & 14.5 & 6.8 \\
+L1 (strip+opt)  & 12.0 & 11.8 & 6.8 \\
+L2 (obfuscated) & 15.0 & 18.0 & 8.0 \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -454,6 +505,12 @@ P1 & L2 & 2 & 3 \\
 P2 & L0 & 5 & 5 \\
 P2 & L1 & 4 & 5 \\
 P2 & L2 & 2 & 4 \\
+P3 & L0 & 5 & 5 \\
+P3 & L1 & 4 & 5 \\
+P3 & L2 & 2 & 4 \\
+P4 & L0 & 5 & 5 \\
+P4 & L1 & 4 & 5 \\
+P4 & L2 & 2 & 3 \\
 \midrule
 \textbf{Mean} & L0 & \textbf{5.0} & \textbf{5.0} \\
 \textbf{Mean} & L1 & \textbf{4.0} & \textbf{5.0} \\
@@ -555,7 +612,13 @@ an embedded interpreter, so there is no native \texttt{cmp 0x3F7} to
 find~\cite{protecting-survey}. Commercial protectors (VMProtect, Themida) and
 research obfuscators (Tigress, OLLVM~\cite{ollvm}) implement this. Our results
 motivate virtualization specifically as the step that closes the purpose/secret
-gap, and quantifying that closure is the natural next experiment.
+gap, and quantifying that closure is the natural next experiment. A cheaper
+intermediate step is packing: our repository includes an optional packing level
+(L3, via UPX) that compresses and encrypts the whole code section so a static
+image shows only a stub. Packing defeats all static recovery until the program is
+unpacked at run time, but unlike virtualization it is trivially reversed by a
+dynamic dump, which is why we treat it as a triage-grade layer rather than a
+secret-hiding one.
 
 \subsection{A Layered Defender's Playbook}
 The measurements suggest a cost-ordered strategy:
@@ -584,7 +647,7 @@ levels rather than a 0--5 rubric.
 
 \subsection{Threats to Validity}
 Beyond the author/analyst coupling noted in Section~\ref{sec:method}, our testbed
-is small (two programs), the obfuscation is source-level rather than a production
+is small (four programs), the obfuscation is source-level rather than a production
 protector, and the analyst performs only static analysis. These choices favor
 reproducibility and isolation of effects over external validity; the trends we
 report (stripping weak, encryption cheap and effective, structure hidden but data
@@ -631,10 +694,13 @@ to 3.5. Closing that gap requires hiding the data plane, which points to binary
 virtualization as the necessary next layer and as the next measurement target.
 
 \section*{Reproducibility}
-The two programs, all build commands, the three protection variants, the
+The four programs, all build commands, the three protection variants, the
 disassembly, the figure, and the scripts that compute every number in
-Tables~\ref{tab:static} and~\ref{tab:recovery} are included in the project
-repository so that all results can be regenerated from source.
+Tables~\ref{tab:static}, \ref{tab:cfg}, and~\ref{tab:recovery} are included in the
+project repository so that all results can be regenerated from source. The
+repository also ships an optional \texttt{pack.sh} that adds a packing level
+(L3) with UPX on any machine where the packer is installed, so the packing row
+of future work can be reproduced locally.
 
 \begin{thebibliography}{00}
 \bibitem{llm4decompile} H.~Tan, Q.~Luo, J.~Li, and Y.~Zhang, ``LLM4Decompile: Decompiling binary code with large language models,'' in \emph{Proc. EMNLP}, 2024. arXiv:2403.05286.
