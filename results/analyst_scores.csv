@@ -1,0 +1,7 @@
+prog,level,purpose_0_5,secret_0_5,notes
+P1,L0,5,5,"symbols present (validate/main); plaintext strings; magic 0x3f7 and key 0x5a visible; linear loop"
+P1,L1,4,5,"symbols stripped; -O2 linear; strings still plaintext; constants recoverable"
+P1,L2,2,3,"flattened dispatcher; function boundaries lost; strings encrypted; constants present but must be reassembled across states"
+P2,L0,5,5,"symbols present (collatz_steps); clear while-loop; parity/halving/3n+1 all explicit"
+P2,L1,4,5,"stripped; -O2; arithmetic (shr, and 1, 3n+1) fully visible; no names"
+P2,L2,2,4,"flattened; boundaries lost; arithmetic visible but scattered across dispatcher states"
