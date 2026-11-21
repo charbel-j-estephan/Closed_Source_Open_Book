@@ -37,191 +37,324 @@ Zouk Mosbeh, Lebanon}
 
 \begin{abstract}
 Reverse engineering of compiled software has always threatened the
-confidentiality of proprietary code, embedded secrets, and licensing logic, but
-it demanded scarce expert skill. Large language models are removing that barrier.
+confidentiality of proprietary code, embedded secrets, and licensing logic, but it
+demanded scarce expert skill. Large language models are removing that barrier.
 Tools that decompile binaries end to end and recover names, types, and
 natural-language descriptions from stripped executables turn a slow expert task
 into a fast, automated one, lowering the skill and time an attacker needs to
 understand and crack software. This report examines AI-driven reverse engineering
 as an emerging offensive capability. We define the technology and why it is
-spreading, map the assets it endangers and who owns them, analyze its core
-vulnerabilities against the Confidentiality-Integrity-Availability triad and
-profile the attacker with the Method-Opportunity-Motive framework, and, as our
-main focus, explain why the industry cannot easily solve the problem. To ground
-the analysis in evidence rather than assertion, we conduct a small reproducible
-measurement study: four sample programs, each hiding a secret value or a secret
-algorithm, are protected at three levels and assessed for how much of their
-purpose and secret survive. Across all four, obfuscation cuts mean purpose
-recovery from 5.0 to 2.0 out of 5 but cuts secret recovery only from 5.0 to 3.5,
-because the defining data constants survive transformations that scramble control
-flow. That gap is the crux of the industry's difficulty: hiding what a program is
-costs little, hiding the data an AI can read costs a great deal, and AI capability
-is improving faster than affordable defenses.
+spreading, map the assets it endangers across five industry domains and who owns
+them, analyze its core vulnerabilities against the
+Confidentiality-Integrity-Availability triad and profile the attacker with the
+Method-Opportunity-Motive framework, survey the research landscape, and, as our
+main focus, explain in depth why the industry cannot easily solve the problem. To
+ground the analysis in evidence rather than assertion, we conduct an original,
+reproducible measurement study: four sample programs, each hiding a secret value or
+a secret algorithm, are protected at three cumulative levels and assessed for how
+much of their purpose and secret survive. Across all four, obfuscation cuts mean
+purpose recovery from 5.0 to 2.0 out of 5 but cuts secret recovery only from 5.0 to
+3.5, because the defining data constants survive transformations that scramble
+control flow. That gap is the crux of the industry's difficulty: hiding what a
+program is costs little, hiding the data an AI can read costs a great deal, and AI
+capability is improving faster than affordable defenses.
 \end{abstract}
 
 \begin{IEEEkeywords}
 AI-driven cyberattacks, large language models, reverse engineering, software
-confidentiality, code obfuscation, threat modeling, C-I-A triad
+confidentiality, code obfuscation, threat modeling, C-I-A triad, intellectual
+property protection
 \end{IEEEkeywords}
 
 \section{Introduction and Technological Overview}
-Software ships to users as compiled machine code. For decades that machine code
-has been readable to a determined expert with a disassembler and a decompiler,
-which is why reverse engineering sits behind software piracy, intellectual
-property theft, malware analysis, and vulnerability discovery. What held the
-threat in check was skill: reading decompiled assembly, reconstructing lost names,
-and untangling optimized control flow took years of training and many hours per
-target. That gate is now being removed by artificial intelligence, which is why a
-long-standing risk belongs on a list of modern, rapidly evolving security
-domains.
+Software ships to users as compiled machine code. For decades that machine code has
+been readable to a determined expert with a disassembler and a decompiler, which is
+why reverse engineering sits behind software piracy, intellectual property theft,
+malware analysis, and vulnerability discovery. What held the threat in check was
+skill: reading decompiled assembly, reconstructing lost names, and untangling
+optimized control flow took years of training and many hours per target. That gate
+is now being removed by artificial intelligence, which is why a long-standing risk
+belongs on a list of modern, rapidly evolving security domains.
 
-\textbf{What the technology is.} AI-driven reverse engineering is the use of
-machine learning, and large language models (LLMs) in particular, to automate the
-understanding of compiled programs. The pipeline is familiar; the automation is
-new. A disassembler recovers instructions; a decompiler lifts them into C-like
-pseudocode; and an LLM then reads that output and explains it, renames variables
-and functions, recovers data structures, or rewrites it into clean source.
-LLM4Decompile, an open model series trained specifically to decompile binaries,
-reports results that surpass both GPT-4 and the Ghidra decompiler on standard
-benchmarks~\cite{llm4decompile}. A parallel line of work recovers the symbols that
-stripping removes: ReSym recovers variable names and data structures by combining
-an LLM with program analysis~\cite{resym}, and other systems recover function
-names from stripped binaries~\cite{gennm,funcname}. Empirical studies now measure,
-rather than assume, how capable these models are at understanding real stripped
+\subsection{Historical Context: Reverse Engineering Before AI}
+Reverse engineering of binaries is not new. Disassemblers have existed for decades,
+and interactive tools such as IDA Pro~\cite{idabook} and, more recently, the freely
+available Ghidra framework~\cite{ghidra} industrialized the work of turning machine
+code into something a human can read. Decompilation research advanced steadily,
+with milestones such as pattern-independent control-flow structuring making
+decompiler output far more readable~\cite{nomoregotos}, and binary-analysis
+frameworks such as angr adding symbolic execution and automated
+reasoning~\cite{angr}. Throughout this history, however, the binding constraint was
+human. A decompiler could produce pseudocode, but a trained analyst still had to
+read it, guess the meaning of unnamed functions, and reconstruct intent from
+optimized, idiomatic assembly. That analyst was expensive and slow, and their
+scarcity was, in effect, a security control: most shipped software was safe simply
+because reverse engineering it was not worth anyone's time. AI dissolves that
+control.
+
+\subsection{What the Technology Is}
+AI-driven reverse engineering is the use of machine learning, and large language
+models (LLMs) in particular, to automate the understanding of compiled programs.
+The pipeline is familiar; the automation is new. A disassembler recovers
+instructions; a decompiler lifts them into C-like pseudocode; and an LLM then reads
+that output and explains it, renames variables and functions, recovers data
+structures, or rewrites it into clean source. LLM4Decompile, an open model series
+trained specifically to decompile binaries, reports results that surpass both GPT-4
+and the Ghidra decompiler on standard benchmarks~\cite{llm4decompile}. A parallel
+line of work recovers the symbols that stripping removes: ReSym recovers variable
+names and data structures by combining an LLM with program analysis~\cite{resym},
+and other systems recover function names from stripped
+binaries~\cite{gennm,funcname}. Empirical studies now measure, rather than assume,
+how capable these models are at understanding real stripped
 code~\cite{howfar,empirical}.
 
-\textbf{A concrete pipeline.} In practice an attacker chains the stages into a
-near-automatic workflow. The target binary is loaded into a decompiler such as
-Ghidra~\cite{ghidra}, which produces pseudocode. That pseudocode, often ugly and
-missing names, is handed to an LLM with a simple instruction: explain this
-function, rename the variables, or rewrite it as clean C. A name-recovery model
-labels the stripped functions so the attacker knows which to read first. For a
-protected target, an automated deobfuscation or symbolic-execution pass can
-simplify the control flow before the model sees it~\cite{angr,udupa}. Each stage
-used to be a specialist skill; now each is a tool call, and the attacker's main
-job is to point the pipeline at the right function.
+\subsection{A Concrete Attack Pipeline}
+In practice an attacker chains the stages into a near-automatic workflow. The
+target binary is loaded into a decompiler such as Ghidra, which produces
+pseudocode. That pseudocode, often ugly and missing names, is handed to an LLM with
+a simple instruction: explain this function, rename the variables, or rewrite it as
+clean C. A name-recovery model labels the stripped functions so the attacker knows
+which to read first. For a protected target, an automated deobfuscation or
+symbolic-execution pass can simplify the control flow before the model sees
+it~\cite{angr,udupa}. Each stage used to be a specialist skill; now each is a tool
+call, and the attacker's main job is to point the pipeline at the right function.
+The significance is not that any single step is novel, but that the chain now runs
+with little expertise and can be scripted across many targets at once.
 
-\textbf{The four artifacts that leak intent.} It helps to name what the AI reads,
-because every protection and every weakness discussed later targets one of these.
-First, \emph{symbols}: the names of functions and variables, a labelled map of the
-program when present. Second, \emph{strings}: readable text such as error messages
-and prompts, which announce intent in plain language and are the fastest signal an
-analyst has. Third, \emph{data constants}: the keys, thresholds, and small
-arithmetic baked into instructions, which define what a check accepts or what an
-algorithm computes. Fourth, the \emph{control-flow graph} (CFG): the shape of
-loops and branches, which when it mirrors the source lets a reader follow the
-logic. Human and AI analysts alike reconstruct a program by recovering these four
-things. Defenders try to remove them; AI makes the removal harder to rely on.
+\subsection{The Four Artifacts That Leak Intent}
+It helps to name what the AI reads, because every protection and every weakness
+discussed later targets one of these. First, \emph{symbols}: the names of functions
+and variables, a labelled map of the program when present. Second, \emph{strings}:
+readable text such as error messages and prompts, which announce intent in plain
+language and are the fastest signal an analyst has. Third, \emph{data constants}:
+the keys, thresholds, and small arithmetic baked into instructions, which define
+what a check accepts or what an algorithm computes. Fourth, the \emph{control-flow
+graph} (CFG): the shape of loops and branches, which when it mirrors the source
+lets a reader follow the logic. Human and AI analysts alike reconstruct a program
+by recovering these four things. Defenders try to remove them; AI makes the removal
+harder to rely on, because models are increasingly good at inferring what stripping
+and light obfuscation try to hide.
 
-\textbf{Why it is a new frontier.} Traditional computer security often assumes a
-bounded, defended perimeter with a defender watching. Shipped software is the
-opposite: the artifact is in the attacker's hands, on their machine, with
-unlimited time and no network defender in the loop. The only protection is how
-hard the binary is to understand. For decades that difficulty was a reliable
-deterrent because expert reverse-engineering talent was scarce and slow. AI breaks
-that assumption. When understanding becomes fast, cheap, and scalable, every
-secret shipped inside a binary, every key, license check, and proprietary
-algorithm, becomes far more exposed than its owner assumed when they compiled it.
-The capability, not the artifact, has changed, and that is what makes this a
-current security frontier rather than settled history.
+\subsection{Why LLMs Are Suited to Reading Code}
+Code is unusually well matched to language models. It is highly structured, follows
+strong local conventions, and compilers emit recognizable idioms for common
+operations, a loop, a bounds check, a hash, a string comparison. A model trained on
+large volumes of source and its corresponding assembly learns these mappings and
+can often recognize an idiom even after names are stripped, because the shape of the
+instructions is itself a strong signal. This is why name recovery and summarization
+work as well as they do on optimized, stripped code: the model is pattern-matching
+against idioms it has seen millions of times. It is also why the defenses that work
+best are those that destroy idioms rather than merely rename them, a point the
+measurement study makes concrete.
+
+\subsection{The Capability Trajectory}
+Three properties of the current wave make it a security concern rather than a
+curiosity. First, \emph{performance}: purpose-built decompilation models now exceed
+general-purpose models and traditional decompilers on standard
+benchmarks~\cite{llm4decompile}, and symbol-recovery accuracy on stripped binaries
+continues to climb~\cite{gennm,funcname,howfar}. Second, \emph{openness}: leading
+decompilation and symbol-recovery models are released publicly, with weights and
+training data, so the capability is not gated behind a vendor and spreads to anyone
+who wants it~\cite{llm4decompile,resym}. Third, \emph{generality}: because the
+models are general code assistants, every improvement aimed at helping developers
+read and write code transfers directly to reading someone else's binary. The
+trajectory therefore does not depend on anyone deliberately building better attack
+tools; ordinary progress in code intelligence improves the attack for free. A
+defender planning today must assume the reader on the other side is more capable
+next year than this year, with no extra effort on the attacker's part.
+
+\subsection{Why It Is a New Frontier}
+Traditional computer security often assumes a bounded, defended perimeter with a
+defender watching. Shipped software is the opposite: the artifact is in the
+attacker's hands, on their machine, with unlimited time and no network defender in
+the loop. The only protection is how hard the binary is to understand. For decades
+that difficulty was a reliable deterrent because expert reverse-engineering talent
+was scarce and slow. AI breaks that assumption. When understanding becomes fast,
+cheap, and scalable, every secret shipped inside a binary, every key, license
+check, and proprietary algorithm, becomes far more exposed than its owner assumed
+when they compiled it. The capability, not the artifact, has changed, and that is
+what makes this a current security frontier rather than settled history.
 
 \section{Landscape of Assets and Value}
 The value at risk in a binary is not the file itself but what the file reveals or
 enables once understood.
 
-\textbf{Key assets.}
+\subsection{Key Assets}
 \begin{itemize}
 \item \textbf{Proprietary algorithms and IP.} Trading strategies, codecs, ranking
 or pricing logic, and signal-processing routines are often a company's core
 advantage, compiled into a product that customers run.
 \item \textbf{Licensing and DRM logic.} The code that decides whether a copy is
 licensed. Understanding it enables key generators, patches, and piracy.
-\item \textbf{Embedded secrets.} Hardcoded keys, API tokens, credentials, and
-magic constants. Studies of real software repeatedly find secrets baked into
-shipped binaries and firmware.
+\item \textbf{Embedded secrets.} Hardcoded keys, API tokens, credentials, and magic
+constants. Studies of real software repeatedly find secrets baked into shipped
+binaries and firmware.
 \item \textbf{Firmware and device logic.} The control software of IoT devices,
 vehicles, and medical equipment, where understanding the binary is the first step
 to finding exploitable flaws.
 \end{itemize}
 
-\textbf{Concrete domains.} The abstract assets map onto familiar industries. In
-gaming, anti-piracy systems protect both the license check and the game logic, and
-the long history of DRM being cracked within days of release shows how motivated
-and well resourced the attacker side is. In mobile apps, the shipped package
-contains client-side logic that attackers repackage, clone, or strip of ads. In
-the Internet of Things and embedded devices, firmware extracted from a chip has
-repeatedly been found to contain hardcoded credentials and keys, turning one
-cracked device into a master key for an entire product line. In automotive and
-medical devices, the control firmware is the first target for anyone hunting
-safety-critical flaws. Each domain ships a binary whose understanding unlocks
-something valuable.
+\subsection{Domain: Gaming and Digital Rights Management}
+Game studios ship both valuable content and the license logic that monetizes it.
+The history of DRM is a public arms race in which protections are routinely defeated
+within days or weeks of release, which demonstrates both the strength of the
+attacker ecosystem and the limited durability of client-side protection. The most
+aggressive commercial protectors wrap the license check in heavy virtualization
+precisely because anything lighter is cracked almost immediately, and even those are
+eventually defeated, which illustrates in the commercial market the same lesson our
+study shows in miniature: only data-hiding protection slows a determined attacker,
+and it does so at a steep performance cost that players themselves often resent. AI
+lowers the skill each new crack requires, widening the population that can
+participate and shortening the window between release and crack.
 
-\textbf{Who owns them and why they are targets.} Software vendors and game studios
-own licensing and IP and are targeted for piracy and competitive intelligence.
-Embedded and device manufacturers own firmware and are targeted for vulnerability
-discovery and counterfeiting. Security researchers and malware authors both target
-any binary, the former to find flaws, the latter to learn from and weaponize them.
-The common thread is that the owner has lost physical control of the artifact: once
-the binary is distributed, its confidentiality rests entirely on the difficulty of
-reverse engineering, which is precisely the difficulty that AI is eroding. The
-value at stake scales with the asset, from a single stripped ad in a free app to
-the entire intellectual property of a trading firm or the safety of a connected
-vehicle.
+\subsection{Domain: Mobile Applications}
+A mobile app is distributed as a package the user installs, and that package
+contains client-side logic. Attackers repackage apps to insert malware, clone them,
+strip advertising, or bypass in-app purchase checks. Because the app runs on a
+device the attacker controls, every client-side secret, API keys included, is
+exposed to analysis, and AI-assisted tools accelerate the extraction. Mobile is a
+particularly instructive case because the ecosystem already learned part of the
+lesson: security guidance has long warned against trusting the client and against
+embedding secrets in the app, precisely because the binary is in the attacker's
+hands. AI makes that long-standing advice urgent rather than theoretical, because
+the gap between an embedded secret and a motivated attacker is now measured in
+minutes of automated analysis rather than hours of expert effort.
+
+\subsection{Domain: IoT and Embedded Firmware}
+Firmware extracted from a device's flash memory has repeatedly been found to contain
+hardcoded credentials, keys, and backdoor accounts. Because a product line often
+shares one firmware image, a single extracted secret can compromise every device of
+that model, turning one afternoon of analysis into a skeleton key for a whole
+deployment. Embedded firmware is also a worst case for defenders: the devices are
+resource-constrained, so heavy protection is often infeasible, and they are rarely
+updated, so a secret that leaks stays valid for years. AI-assisted analysis speeds
+the search through large, poorly documented firmware blobs for exactly these
+secrets, and the summarization step is especially valuable here because embedded
+code is typically unlabelled and unfamiliar, which is where machine assistance helps
+an attacker most.
+
+\subsection{Domain: Automotive and Medical Devices}
+Connected vehicles and implantable or networked medical devices run control firmware
+whose confidentiality and integrity bear directly on physical safety. Here reverse
+engineering is the first step of vulnerability research, and the stakes rise from
+financial to safety-critical. The same AI tooling that helps a researcher find a
+flaw to report helps an adversary find one to exploit.
+
+\subsection{Domain: Financial and Proprietary Algorithms}
+In finance and analytics, the compiled algorithm can be the entire business value.
+Reverse engineering a pricing model, a trading strategy, or a proprietary analytic
+is direct intellectual-property theft, and AI makes competitive extraction cheaper
+and faster. The stakes here differ from piracy: the attacker may not want to run the
+software at all, only to learn how it works and reproduce the idea in their own
+product, which leaves no pirated copy to detect and no obvious trace of the theft.
+This makes the financial domain a case where detection-based defenses are weakest
+and where moving the sensitive computation server-side, out of any shipped binary,
+is often the only real protection.
+
+\subsection{Ownership and Attacker Interest}
+Software vendors and game studios own licensing and IP and are targeted for piracy
+and competitive intelligence. Embedded and device manufacturers own firmware and
+are targeted for vulnerability discovery and counterfeiting. Security researchers
+and malware authors both target any binary, the former to find flaws, the latter to
+learn from and weaponize them. The common thread is that the owner has lost physical
+control of the artifact: once the binary is distributed, its confidentiality rests
+entirely on the difficulty of reverse engineering, which is precisely the difficulty
+that AI is eroding. Table~\ref{tab:assets} summarizes the landscape.
+
+\begin{table}[t]
+\caption{Assets, owners, and attacker motive by domain.}
+\label{tab:assets}
+\centering\footnotesize
+\begin{tabular}{@{}p{1.7cm}p{2.0cm}p{3.2cm}@{}}
+\toprule
+\textbf{Domain} & \textbf{Key asset} & \textbf{Primary attacker motive} \\
+\midrule
+Gaming/DRM & License logic, game code & Piracy, circumvention \\
+Mobile apps & Client logic, API keys & Repackaging, fraud, cloning \\
+IoT/embedded & Firmware, hardcoded keys & Device compromise, counterfeiting \\
+Automotive/medical & Control firmware & Safety-critical vuln.\ discovery \\
+Finance/analytics & Proprietary algorithms & IP theft, competitive intel \\
+\bottomrule
+\end{tabular}
+\end{table}
 
 \section{Threat and Vulnerability Analysis}
 \subsection{Core Vulnerabilities}
 AI-driven reverse engineering does not exploit a software bug; it exploits
 structural properties of compiled software and amplifies them.
 
-\textbf{V1: Compiled code inherently leaks recoverable artifacts.} A binary is not
-a secret. To run, it must contain real instructions, and it typically also carries
-the four artifacts named above. An analyst reads intent from them, and nothing
-about compilation removes them by default.
+\textbf{V1: Compiled code inherently leaks recoverable artifacts.} A binary is not a
+secret. To run, it must contain real instructions, and it typically also carries the
+four artifacts named above. An analyst reads intent from them, and nothing about
+compilation removes them by default.
 
 \textbf{V2: LLMs automate and scale the recovery.} The historical defense was not
 that the artifacts were absent but that reading them was slow expert work. LLMs
 attack exactly this. They decompile end to end~\cite{llm4decompile}, invent the
-names that stripping removed~\cite{gennm,funcname,resym}, and summarize a
-function's purpose in natural language~\cite{howfar}. The skill barrier that
-limited the threat population collapses, and the work parallelizes.
+names that stripping removed~\cite{gennm,funcname,resym}, and summarize a function's
+purpose in natural language~\cite{howfar}. The skill barrier that limited the threat
+population collapses, and the work parallelizes.
 
-\textbf{V3: Current defenses are delay, not denial.} Obfuscation, the standard
+\textbf{V3: Standard compilation preserves recognizable idioms.} Optimizing
+compilers emit predictable patterns for common operations, and models key on those
+patterns. Ordinary release builds therefore remain highly legible to AI even when
+stripped, because stripping removes names but not idioms.
+
+\textbf{V4: Current defenses are delay, not denial.} Obfuscation, the standard
 defense, raises cost but does not eliminate recovery. Flattened control flow is
 simplified by automated deobfuscation and symbolic execution~\cite{angr,udupa};
-packers are undone by running the program and dumping memory~\cite{rolles}; and
-even heavy virtualization is lifted by recovering its interpreter. Worse, as our
+packers are undone by running the program and dumping memory~\cite{rolles}; and even
+heavy virtualization is lifted by recovering its interpreter. Worse, as our
 measurement study in Section~\ref{sec:study} shows, lightweight obfuscation leaves
 the secret data constants in place even when it hides program structure.
 
 \subsection{Exploitation in Practice}
-These weaknesses are exploited along two paths. The first is direct cracking. An
-attacker locates the license or integrity check, understands it with AI-assisted
-decompilation, and then patches the binary or forges a key. The decades-long
-pattern of game DRM being defeated shortly after release shows the economic pull,
-and AI lowers the skill and time each new crack requires. The second path is
-intelligence and exploitation. A malware analyst or an adversary uses the same
-pipeline to summarize thousands of functions, find the one that handles secrets or
-parses untrusted input, and focus effort there, accelerating both defensive triage
-and offensive vulnerability discovery. In both paths the model does not break
-cryptography or find a zero day on its own; it removes the comprehension
-bottleneck that used to protect the code, which is enough to change the economics
-of the attack.
+\textbf{Scenario 1: license cracking.} An attacker wants to run paid software
+without paying. They decompile the binary, ask an LLM to locate and explain the
+licensing routine, learn that it compares a transformed serial against a stored
+value, and then either patch the comparison to always succeed or write a key
+generator. AI compresses what was once days of expert tracing into a short,
+guided session.
+
+\textbf{Scenario 2: vulnerability discovery.} An attacker or researcher wants a flaw
+in a device's firmware. They run an AI summarization pass over thousands of
+functions, filter for those that parse untrusted input or handle secrets, and focus
+manual effort on the few that matter. The model does not find the bug by itself, but
+it removes the triage bottleneck that used to make large firmware images
+impractical to study. In both scenarios the AI's contribution is comprehension at
+scale, not a cryptographic break.
+
+\subsection{The Defensive Mirror Image}
+The same capability is a powerful defensive tool, which is part of why it cannot be
+suppressed. Malware analysts face the inverse problem: an adversary's binary,
+deliberately obfuscated, that they must understand quickly to build a signature or
+an incident response. AI-assisted decompilation and summarization shorten that work,
+letting defenders triage far more samples than a human team could. Interoperability
+work, security auditing of third-party binaries, and legacy-software maintenance all
+rely on reverse engineering as well. The threat and the defense are the same
+technology pointed in opposite directions, which is why the realistic security
+question is not how to stop AI-assisted RE but how to live in a world where it is
+cheap and widespread.
 
 \subsection{Mapping to the C-I-A Triad}
 \textbf{Confidentiality} is the property most directly compromised. The entire
 threat is about reading what the owner wished to keep secret: algorithms, keys, and
-licensing logic. AI-driven RE is, at its core, a large-scale confidentiality
-attack on shipped code.
+licensing logic. AI-driven RE is, at its core, a large-scale confidentiality attack
+on shipped code. When a trading algorithm or a proprietary codec is recovered, the
+owner's secret is simply gone.
 
 \textbf{Integrity} is compromised as a direct consequence. Once an attacker
 understands a license check or an integrity routine, they can patch it, forge keys,
-or tamper with program behavior. Understanding enables modification, so a
-confidentiality break becomes an integrity break.
+or tamper with program behavior. A cracked game, a repackaged app carrying malware,
+and a forged license are all integrity violations that began as confidentiality
+breaks: understanding enabled modification.
 
 \textbf{Availability} is affected indirectly. Pirated or cracked software undermines
 the commercial availability of the legitimate product and its update channel, and
 vulnerabilities discovered through AI-assisted RE can later feed attacks that take
-systems down. Availability is the least direct of the three but not absent.
+systems down. Availability is the least direct of the three but not absent,
+particularly for safety-critical devices where an exploited flaw can disable
+function.
 
 \subsection{Attacker Profile (M-O-M)}
 \textbf{Method.} LLM-augmented decompilers and name-recovery
@@ -230,8 +363,8 @@ execution~\cite{angr,udupa}, and dynamic unpacking~\cite{rolles}, chained into
 pipelines that need little expert input.
 
 \textbf{Opportunity.} Maximal. The binary is distributed to the attacker, who runs
-it on their own hardware with unlimited time, no network defender, and free or
-cheap tools. Shipping software is handing the attacker the artifact.
+it on their own hardware with unlimited time, no network defender, and free or cheap
+tools. Shipping software is handing the attacker the artifact.
 
 \textbf{Motive.} Piracy and license circumvention, intellectual-property and
 algorithm theft, competitive intelligence, vulnerability discovery for later
@@ -245,36 +378,98 @@ attackers, so a threat that was previously gated by expertise becomes broadly
 accessible. That shift, from an expert-only method to a commodity one, is the
 precise mechanism by which an old risk becomes a modern one.
 
+\subsection{How the Classic Threat Model Shifts}
+AI-driven RE does not add a new box to the threat model so much as change the
+probabilities on an existing one, and that is what makes it easy to underestimate.
+Three assumptions that defenders long relied on no longer hold. The first is the
+\emph{skill assumption}: that reverse engineering required a rare expert, so only
+high-value targets were realistically at risk. When the skill becomes a prompt, the
+set of realistic targets expands to include ordinary software that was previously
+safe through obscurity. The second is the \emph{effort assumption}: that analysis
+scaled with human hours, so an attacker could study only a handful of functions.
+Automated summarization removes that ceiling, making large firmware images and whole
+app stores tractable to triage at once. The third is the \emph{obscurity
+assumption}: that stripping names and optimizing code hid intent well enough. AI
+name recovery and idiom recognition erode exactly this. In classic risk terms, the
+likelihood of a confidentiality compromise rises sharply for a wide class of
+products, even though the impact per compromise is unchanged, and it is the
+likelihood, not the impact, that most existing software-protection decisions were
+implicitly calibrated against.
+
 \section{Original Measurement Study: What Protection Actually Hides}\label{sec:study}
 The threat analysis rests on a claim that deserves evidence: that lightweight
-protection hides a program's structure far more effectively than it hides the
-secret data inside it. To test this directly, and to go beyond summarizing others'
-work, we built a small, fully reproducible testbed. All code, build scripts, and
-results are in a public repository so the numbers below can be regenerated from
-source.
+protection hides a program's structure far more effectively than it hides the secret
+data inside it. To test this directly, and to go beyond summarizing others' work, we
+built a small, fully reproducible testbed. All code, build scripts, and results are
+in a public repository so the numbers below can be regenerated from source.
 
-\subsection{Method}
+\subsection{Programs and Ground Truth}
 We wrote four small C programs with behavior we fully control, so the ``right
-answer'' an analyst seeks is always known.
+answer'' an analyst seeks is always known. They span the two things developers
+protect, a secret value and a secret algorithm, and span arithmetic-heavy and
+branch-heavy code.
 \begin{itemize}
-\item \textbf{P1}, a license validator (XOR-sum of the password compared to a
-magic constant). Protects a secret \emph{value}.
-\item \textbf{P2}, a Collatz stopping-time computer ($3n{+}1$). Protects a secret
-\emph{algorithm}.
-\item \textbf{P3}, a djb2 hash key check (seed \texttt{5381}). Protects a named
-algorithm and its constants.
+\item \textbf{P1}, a license validator (Listing~\ref{lst:p1}): XOR-sum of the
+password compared to \texttt{0x3F7}. Secret value.
+\item \textbf{P2}, a Collatz stopping-time computer: the $3n{+}1$ map. Secret
+algorithm.
+\item \textbf{P3}, a djb2 hash key check: seed \texttt{5381}, multiply by $33$.
+Named algorithm and constants.
 \item \textbf{P4}, an eight-digit serial validator with a mod-10 check digit.
 Branch-heavy logic.
 \end{itemize}
+
+\begin{lstlisting}[style=ccode,caption={P1 license validator (unprotected).},label={lst:p1}]
+static int validate(const char *pw) {
+    int acc = 0;
+    for (size_t i = 0; i < strlen(pw); i++)
+        acc += (pw[i] ^ 0x5A);
+    return acc == 0x3F7;
+}
+\end{lstlisting}
+
+\begin{lstlisting}[style=ccode,caption={P2 Collatz stopping time (unprotected).},label={lst:p2}]
+static unsigned long collatz_steps(unsigned long n) {
+    unsigned long steps = 0;
+    while (n != 1) {
+        if (n % 2 == 0) n = n / 2;
+        else            n = 3 * n + 1;
+        steps++;
+    }
+    return steps;
+}
+\end{lstlisting}
+
+\begin{lstlisting}[style=ccode,caption={P3 djb2 hash key check (unprotected).},label={lst:p3}]
+static unsigned long djb2(const char *s) {
+    unsigned long h = 5381; int c;
+    while ((c = *s++)) h = ((h << 5) + h) + c; /* h*33 + c */
+    return h;
+}
+/* grant iff djb2(key) == TARGET */
+\end{lstlisting}
+
+\begin{lstlisting}[style=ccode,caption={P4 serial validator (unprotected, abridged).},label={lst:p4}]
+static int valid(const char *s) {
+    if (strlen(s) != 8) return 0;
+    for (int i = 0; i < 8; i++)
+        if (s[i] < '0' || s[i] > '9') return 0;
+    int sum = 0;
+    for (int i = 0; i < 7; i++) sum += s[i] - '0';
+    return (s[7] - '0') == sum % 10; /* mod-10 check digit */
+}
+\end{lstlisting}
+
+\subsection{Protection Levels}
 Each program was compiled at three cumulative protection levels: \textbf{L0}
-(\texttt{-O0}, symbols kept); \textbf{L1} (\texttt{-O2} then \texttt{strip -s});
-and \textbf{L2}, a source-level rewrite applying control-flow flattening, opaque
+(\texttt{-O0}, symbols kept); \textbf{L1} (\texttt{-O2} then \texttt{strip -s}); and
+\textbf{L2}, a source-level rewrite applying control-flow flattening, opaque
 predicates, and string encryption, then \texttt{-O2} and stripping.
 Listing~\ref{lst:flatten} shows the flattening pattern: the natural loop becomes a
-dispatcher over a state variable, guarded by an opaque predicate \texttt{OP} that
-is always true, with a dead sink state that never runs. We verified that all three
-levels of every program produce identical output, including the known fact that
-the Collatz stopping time of 27 is 111 steps.
+dispatcher over a state variable, guarded by an opaque predicate \texttt{OP} that is
+always true, with a dead sink state that never runs. We verified that all three
+levels of every program produce identical output, including the known fact that the
+Collatz stopping time of 27 is 111 steps, so protection never changed behavior.
 
 \begin{lstlisting}[style=ccode,caption={Control-flow flattening at L2 (P1, abridged).},label={lst:flatten}]
 #define OP(x) ((((unsigned)(x)*(unsigned)(x) \
@@ -290,23 +485,30 @@ for (;;) switch (state) {
 }
 \end{lstlisting}
 
-We measured three things per binary: objective static indicators
-(\texttt{nm} symbol count, \texttt{strings} count, presence of the plaintext
-secret output); an objective control-flow complexity proxy (counts of conditional,
-unconditional, and indirect jumps); and an analyst recovery score on a 0--5 scale
-for program purpose and for the embedded secret, assigned from a reading of the
-disassembly. We note a validity caveat: the analyst was an LLM, and a similar model
-assisted in producing the obfuscated code, so the analyst is not fully blind. The
-static and complexity numbers are script-derived and model-independent, and anchor
-the subjective scores; independent replication with a separate model and with human
-analysts timed by hand is the right next step.
+We applied L2 at the source level because a commercial protector and a dedicated
+obfuscator were not available in our build environment. This is a deliberate,
+documented choice: it keeps the testbed reproducible with only \texttt{gcc} and
+isolates the effect of flattening, stripping, and string encryption. It does not
+model binary virtualization, whose absence we show to matter.
+
+\subsection{Metrics and a Validity Caveat}
+We measured three things per binary: objective static indicators (\texttt{nm} symbol
+count, \texttt{strings} count, presence of the plaintext secret output); an
+objective control-flow complexity proxy (counts of conditional, unconditional, and
+indirect jumps); and an analyst recovery score on a 0--5 scale for program purpose
+and for the embedded secret, assigned from a reading of the disassembly. We note a
+validity caveat: the analyst was an LLM, and a similar model assisted in producing
+the obfuscated code, so the analyst is not fully blind. The static and complexity
+numbers are script-derived and model-independent, and anchor the subjective scores;
+independent replication with a separate model and with human analysts timed by hand
+is the right next step.
 
 \subsection{Results}
 Table~\ref{tab:static} reports the static indicators. Stripping (L1) removes every
 symbol, and string encryption (L2) is the only step that removes the plaintext
-secret output. Table~\ref{tab:cfg} shows the complexity proxy: flattening at L2
-raises every count, most clearly the indirect jumps, because the compiler lowers
-the state dispatcher to a jump table. Table~\ref{tab:recovery} and
+secret output. Table~\ref{tab:cfg} and Fig.~\ref{fig:cfg} show the complexity proxy:
+flattening at L2 raises every count, most clearly the indirect jumps, because the
+compiler lowers the state dispatcher to a jump table. Table~\ref{tab:recovery} and
 Fig.~\ref{fig:recovery} report recovery. The trend is identical across all four
 programs: obfuscation cuts mean purpose recovery from 5.0 to 2.0, but cuts mean
 secret recovery only from 5.0 to 3.5.
@@ -345,6 +547,14 @@ L2 (obfuscated) & 15.0 & 18.0 & 8.0 \\
 \bottomrule
 \end{tabular}
 \end{table}
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=0.85\columnwidth]{cfg.pdf}
+\caption{Mean jump counts per binary by level. Flattening at L2 raises all three,
+and introduces indirect jumps as the dispatcher becomes a jump table.}
+\label{fig:cfg}
+\end{figure}
 
 \begin{table}[t]
 \caption{Analyst recovery scores (0--5).}
@@ -386,7 +596,8 @@ flattened dispatcher has become an indirect jump through a jump table
 \texttt{add \$0xdead}, and function boundaries are gone, so program purpose is hard
 to state. Yet \texttt{lea (\%rax,\%rax,2)} still computes $3n$ in plain sight, and
 for P1 the constants \texttt{0x3F7} and \texttt{0x5A} remain in the instruction
-stream. The structure is destroyed; the data is not.
+stream; for P3 the djb2 seed \texttt{5381} survives and is a strong tell for the
+algorithm. The structure is destroyed; the data is not.
 
 \begin{lstlisting}[style=asm,caption={P2 at L0: the algorithm is explicit.},label={lst:asm-l0}]
 and  $0x1,%eax      ; parity test (n odd?)
@@ -405,12 +616,87 @@ add  $0xdead,%rdx       ; dead sink (never runs)
 notrack jmp *%rsi       ; flattened dispatcher
 \end{lstlisting}
 
+\subsection{Threats to Validity and Limitations}
+Our testbed is small (four programs), the obfuscation is source-level rather than a
+production protector, and the analyst performs only static analysis. These choices
+favor reproducibility and isolation of effects over external validity. The analyst
+is also not fully blind, as noted. We therefore present the numbers as a controlled
+illustration of a mechanism, surviving data constants, rather than as a general
+measurement of any particular tool, and we point to larger-scale replication with
+production protectors, multiple independent models, and human analysts as the way to
+strengthen the result.
+
+\subsection{Extending the Study}
+The repository includes an optional packing level (L3) using the UPX packer, which
+on a machine where the packer is installed compresses and encrypts the whole code
+section so a static view shows only a stub. Packing defeats all static recovery
+until the program is unpacked at run time, but a runtime memory dump reverses it,
+which is why we treat it as triage-grade. The natural next step is to add a
+virtualization level and measure whether, as our analysis predicts, it is the step
+that finally removes the surviving constants.
+
+\section{Situating the Threat Among AI-Driven Attacks}
+AI-assisted reverse engineering is one member of a broader family of AI-driven
+cyberattacks, and comparing it with its siblings clarifies what is distinctive about
+it. The most discussed members are AI-generated spear-phishing and social
+engineering, in which models craft convincing, personalized lures at scale, and
+adaptive or AI-assisted malware, in which models help generate, mutate, or obfuscate
+malicious code. These share a common engine with AI-assisted RE, a general model of
+language and code applied to an offensive end, but they differ in an important way.
+
+Phishing and social engineering target the \emph{human} as the weak link, and their
+defenses are correspondingly human and procedural: training, verification, and
+filtering. AI-assisted malware targets the \emph{defender's detection}, and its
+countermeasures live in endpoint and network security. AI-assisted reverse
+engineering is different because it targets the \emph{artifact itself}, the shipped
+binary, and there is no user to train and no network sensor to tune; the only
+defense is the intrinsic difficulty of understanding the code, which is exactly the
+property AI erodes. This makes it quieter than the other two. A phishing wave or a
+malware outbreak is visible and generates incidents; the reverse engineering of a
+binary to steal an algorithm or forge a license may leave no trace at all until the
+stolen idea appears in a competitor's product or a crack appears online.
+
+There is also a shared root cause worth naming. In every case, a capability that was
+previously gated by human skill, writing a convincing lure, authoring novel malware,
+reading compiled code, has been turned into a cheap, scalable, automatable service by
+general-purpose models. The defensive implication is parallel too: in each domain,
+the response is shifting from preventing the capability, which is no longer possible,
+to reducing exposure and improving detection. For reverse engineering specifically,
+that means shipping fewer secrets and watching for their misuse, because the
+understanding itself can no longer be reliably prevented.
+
+\section{Related Work}
+Obfuscation has a long theoretical and practical history. Collberg et al.\ introduced
+the canonical taxonomy of obfuscating transformations~\cite{obf-taxonomy} and later
+framed obfuscation, watermarking, and tamper-proofing as a unified protection
+problem~\cite{collberg-tse}; a book-length treatment consolidates the
+field~\cite{surreptitious}, and Banescu and Pretschner provide a modern
+tutorial~\cite{banescu}. Linn and Debray showed how to obstruct static disassembly
+directly~\cite{linn-debray}, Wang et al.\ obstructed static analysis through
+control-flow transformation~\cite{wang-tamper}, and Obfuscator-LLVM brought
+production-grade obfuscation to a mainstream compiler~\cite{ollvm}. A broad survey
+asks whether obfuscation can keep pace with code analysis at
+all~\cite{protecting-survey}. On the analysis side, Udupa et al.\ studied automated
+deobfuscation~\cite{udupa}, Rolles analyzed unpacking of virtualization
+obfuscators~\cite{rolles}, Yakdan et al.\ advanced pattern-independent
+decompilation~\cite{nomoregotos}, and angr systematized automated binary
+analysis~\cite{angr}. A foundational theoretical result establishes that general
+program obfuscation is impossible in the strongest sense~\cite{barak}. The newest
+and most relevant thread is AI-assisted RE: LLM4Decompile decompiles end to
+end~\cite{llm4decompile}; ReSym~\cite{resym}, GenNm~\cite{gennm}, and domain-adapted
+models~\cite{funcname} recover symbols from stripped binaries; and empirical studies
+chart how capable these models are in realistic settings~\cite{howfar,empirical}.
+Our contribution relative to this body of work is a threat-centered synthesis for a
+security audience, together with a small controlled study that isolates why
+lightweight protection fails against AI readers.
+
 \section{Current Industry Challenges and Landscape Outlook}
 This is the heart of the problem: not that no defense exists, but that no
 affordable, durable defense exists, and AI is widening the gap. We organize the
-difficulty into five roadblocks.
+difficulty into five roadblocks and then turn to economics, standards, and the
+outlook.
 
-\subsection{Protection Is Delay, Not Denial, and Data Is the Hardest to Hide}
+\subsection{Protection Is Delay, Not Denial, and Data Is Hardest to Hide}
 Our study generalizes a well-known truth. Symbol stripping removes names, but AI
 name-recovery tools are designed to put them back~\cite{gennm,funcname,howfar}.
 String encryption removes readable text, not logic. Control-flow flattening hides
@@ -423,25 +709,45 @@ also the most expensive technique, which sets up the next roadblock.
 \subsection{The Defender's Toolbox and Why Each Tool Falls Short}
 Every deployed defense has a gap an AI reader exploits. \emph{Symbol stripping} is
 free but undone by name-recovery models~\cite{gennm,funcname}. \emph{String
-encryption} hides messages, not logic. \emph{Control-flow obfuscation} is
-simplified by automated deobfuscation~\cite{angr,udupa} and leaves constants in
-place. \emph{Packing} hides everything statically but falls to a runtime memory
+encryption} hides messages, not logic. \emph{Control-flow obfuscation} is simplified
+by automated deobfuscation~\cite{angr,udupa} and leaves constants in place.
+\emph{Packing} hides everything statically but falls to a runtime memory
 dump~\cite{rolles}. \emph{Virtualization} is strongest but expensive and still
 defeated by recovering the interpreter. \emph{Server-side execution} removes the
 binary but only for logic that can run remotely. \emph{Hardware enclaves} protect
 secrets at the cost of hardware dependence. No tool denies recovery; each buys a
 different amount of time at a different cost, and AI lowers the time each one buys.
+Table~\ref{tab:mitig} summarizes the trade-offs.
+
+\begin{table}[t]
+\caption{Defensive techniques: what they hide, cost, and the AI-relevant weakness.}
+\label{tab:mitig}
+\centering\footnotesize
+\begin{tabular}{@{}p{1.5cm}p{1.6cm}p{0.8cm}p{2.3cm}@{}}
+\toprule
+\textbf{Technique} & \textbf{Hides} & \textbf{Cost} & \textbf{Weakness} \\
+\midrule
+Symbol stripping & Names & None & Name-recovery models \\
+String encryption & Messages & Low & Logic still visible \\
+CF flattening & Structure & Med. & Deobfuscation; data survives \\
+Packing & All (static) & Low & Runtime memory dump \\
+Virtualization & Data + logic & High & Interpreter lifting; cost \\
+Server-side & The binary & Med. & Needs connectivity \\
+Hardware enclave & Secrets & High & Hardware dependence \\
+\bottomrule
+\end{tabular}
+\end{table}
 
 \subsection{Strong Protection Is Costly and Brittle}
-Virtualization and heavy obfuscation carry real costs that keep most developers
-from using them. They inflate binary size and slow execution, sometimes by large
-factors, which is unacceptable for performance-sensitive or resource-constrained
-software such as games, codecs, and embedded firmware. Packed and virtualized
-binaries also trigger antivirus false positives, because malware uses the same
-techniques, creating a distribution problem for legitimate vendors. Commercial
-protectors are expensive to license and they complicate the vendor's own debugging
-and crash reporting. The one defense that actually hides data from an AI reader is
-the one most teams cannot afford to deploy broadly.
+Virtualization and heavy obfuscation carry real costs that keep most developers from
+using them. They inflate binary size and slow execution, sometimes by large factors,
+which is unacceptable for performance-sensitive or resource-constrained software such
+as games, codecs, and embedded firmware. Packed and virtualized binaries also trigger
+antivirus false positives, because malware uses the same techniques, creating a
+distribution problem for legitimate vendors. Commercial protectors are expensive to
+license and they complicate the vendor's own debugging and crash reporting. The one
+defense that actually hides data from an AI reader is the one most teams cannot
+afford to deploy broadly.
 
 \subsection{AI Capability Is Improving Faster Than Defenses}
 The economics favor the attacker. Decompilation and symbol-recovery models are
@@ -454,30 +760,118 @@ models may fall to next year's. One side scales with general AI progress; the ot
 does not.
 
 \subsection{A Fundamental Limit and a Fragmented, Dual-Use Response}
-Underneath the economics sits a hard limit. A program that runs on a CPU must
-present real instructions to it, so a patient attacker with dynamic analysis can
-always observe behavior, dump unpacked code, and recover secrets. Theoretical work
-on the impossibility of general program obfuscation reinforces that there is no
-perfect, universal solution~\cite{barak}. The defensive response is also
-fragmented: no standard, no agreed metric for how much protection a technique
-provides, and little shared tooling, so each vendor improvises, and the honest
-metric, attacker time, keeps shifting as tools improve. Finally, the capability is
-dual-use and cannot simply be banned: malware analysts and researchers rely on the
-same AI-assisted RE to understand hostile binaries, so there is no way to keep the
+Underneath the economics sits a hard limit. A program that runs on a CPU must present
+real instructions to it, so a patient attacker with dynamic analysis can always
+observe behavior, dump unpacked code, and recover secrets. Theoretical work on the
+impossibility of general program obfuscation reinforces that there is no perfect,
+universal solution~\cite{barak}. The defensive response is also fragmented: no
+standard, no agreed metric for how much protection a technique provides, and little
+shared tooling, so each vendor improvises. Finally, the capability is dual-use and
+cannot simply be banned: malware analysts and researchers rely on the same
+AI-assisted RE to understand hostile binaries, so there is no way to keep the
 defensive benefit while denying the offensive one.
 
-\subsection{Outlook}
-The likely trajectory is a continuing arms race rather than a resolution. Three
-shifts are visible. First, vendors increasingly move sensitive logic off the client
-entirely, running it server-side so no binary is shipped, trading reverse-engineering
-risk for a dependency on connectivity and server security. Second, interest is
-growing in hardware-backed protection such as trusted execution environments, which
-move secrets into enclaves the host cannot easily read, at the cost of hardware
-dependence. Third, the field is beginning to treat AI-assisted RE as a first-class
-threat to measure and plan against, rather than assuming compilation confers
-secrecy. None of these removes the core tension: as long as software is distributed
-as a binary that must eventually run, its confidentiality depends on a difficulty
-that AI is steadily reducing.
+\subsection{The Economics of the Arms Race}
+The deepest reason the problem persists is economic asymmetry. An attacker needs to
+succeed once per target and can amortize a reusable pipeline across many victims; a
+defender must succeed on every copy shipped, forever, against tools that keep
+improving. Protection is a recurring cost (licensing, performance, engineering,
+support), while attack is an increasingly cheap, increasingly automated activity.
+For most products the rational defender invests only enough to deter casual
+attackers, accepting that a determined one will succeed, which is exactly why
+client-side protection is best understood as raising cost rather than guaranteeing
+secrecy. AI tilts this balance further toward the attacker by lowering their cost
+per target while leaving the defender's per-copy cost unchanged. A protection that
+was economically rational a few years ago, because it raised attacker effort above
+the value of the target, can quietly become irrational as that effort falls, without
+the defender doing anything wrong and often without noticing until a crack or a leak
+appears. The arms race is therefore not only technical but financial, and the
+defender is racing a cost curve that bends in the attacker's favor over time.
+
+\subsection{The Standards and Measurement Gap}
+There is no accepted way to state how protected a binary is. The honest metric is
+attacker time, but attacker time depends on tools and skill that change, so a figure
+measured today may not hold next year, and no standard benchmark or certification
+exists for comparing protectors. This leaves defenders unable to make informed
+trade-offs and leaves the market without a clear signal of quality, which slows
+investment in better defenses. The measurement problem is not merely academic. A
+vendor choosing a protector cannot compare products on any agreed axis, a
+researcher cannot easily state that one technique is stronger than another against
+AI readers, and a manager cannot justify the cost of heavy protection with a number.
+Our own study underscores the difficulty: the honest metric we could offer, analyst
+recovery, depends on which analyst and which tools, and a cleaner measure, human
+time to recovery, is expensive to gather and ages as tools improve. Until the field
+agrees on how to measure protection, the arms race runs without a scoreboard, and
+defenders invest on intuition rather than evidence.
+
+\subsection{Legal and Regulatory Dimensions}
+Technical defenses do not operate in a vacuum; a legal layer sits around them, and it
+is itself under strain. Anti-circumvention laws prohibit defeating technical
+protection measures, and software licenses commonly forbid reverse engineering, so
+cracking a protected product is often unlawful as well as technically possible. But
+legal deterrence is weak against anonymous, distributed, cross-border attackers, and
+it coexists uneasily with legitimate uses of reverse engineering that the law also
+protects or tolerates, such as interoperability, security research, and repair. The
+result is a gray zone: the same act of understanding a binary can be a crime, a
+protected research activity, or a routine maintenance task depending on who does it
+and why. AI widens this zone by making the capability universal, so the law is
+increasingly asked to distinguish intent rather than capability, which it does
+poorly. For defenders, the practical lesson is that legal protection is a backstop
+for after the fact enforcement, not a substitute for technical measures, and neither
+layer is sufficient alone.
+
+\subsection{Outlook and Emerging Directions}
+The likely trajectory is a continuing arms race rather than a resolution, but several
+directions are gaining ground. First, vendors increasingly move sensitive logic off
+the client entirely, running it server-side so no binary is shipped, trading
+reverse-engineering risk for a dependency on connectivity and server security.
+Second, interest is growing in hardware-backed protection such as trusted execution
+environments and confidential computing, which move secrets into enclaves the host
+cannot easily read, at the cost of hardware dependence. Third, watermarking and
+provenance techniques aim not to prevent understanding but to prove theft after the
+fact, shifting some protection from prevention to deterrence. Fourth, the field is
+beginning to treat AI-assisted RE as a first-class threat to measure and plan
+against, rather than assuming compilation confers secrecy. None of these removes the
+core tension: as long as software is distributed as a binary that must eventually
+run, its confidentiality depends on a difficulty that AI is steadily reducing.
+
+\section{Discussion: Practical Guidance for Defenders}
+Although the brief of this report is to explain rather than to prescribe, the
+analysis points to a small set of practical stances that follow directly from the
+evidence, and stating them sharpens the explanation of why the problem is hard.
+
+\textbf{Treat compilation as encoding, not encryption.} The first and most common
+mistake is to assume that because code is compiled, it is secret. It is not. A
+defender should assume that any logic or constant shipped in a binary can be read,
+and design accordingly, rather than discovering the assumption was false after a
+leak.
+
+\textbf{Classify what actually must be protected.} Most of a program is not worth
+hiding. The crown jewels, a licensing secret, a proprietary algorithm, an embedded
+key, are a small fraction of the code. Protecting everything uniformly wastes the
+performance and engineering budget that the few truly sensitive routines need.
+Identifying those routines is the prerequisite for any sensible defense.
+
+\textbf{Match the defense to the threat tier.} Against a casual attacker who relies
+on fast AI triage, cheap measures, stripping and string encryption, are enough,
+because they remove the signals such an attacker depends on. Against a determined
+attacker after a specific secret, only data-hiding measures such as virtualization
+or moving the logic off the client have any effect, and even those buy time rather
+than safety. Spending heavy-protection budget to stop casual attackers, or cheap
+measures to stop determined ones, both misallocate.
+
+\textbf{Prefer not shipping the secret at all.} The one defense that AI does not
+erode is the secret the attacker never receives. Where the sensitive logic can run
+server-side, in an enclave, or behind an API, the reverse-engineering problem
+largely disappears, at the cost of connectivity and operational complexity. For the
+highest-value logic, this is increasingly the only durable answer.
+
+\textbf{Plan for detection, not just prevention.} Because prevention is temporary,
+watermarking and provenance, which prove theft after the fact, and monitoring for
+leaked keys or cloned apps, which detect a breach, deserve a place alongside
+obfuscation. Shifting part of the effort from preventing understanding to detecting
+and responding to misuse matches the reality that understanding cannot be fully
+prevented.
 
 \section{Conclusion}
 AI-driven reverse engineering does not create a new attack so much as industrialize
@@ -489,21 +883,22 @@ drops mean purpose recovery from 5.0 to 2.0 but drops secret recovery only from 
 to 3.5, because data constants survive. Mapped to the C-I-A triad, the primary
 casualty is confidentiality, with integrity following once understanding enables
 tampering. The problem is hard not for lack of techniques but because of their
-economics: the defenses that hide the data an AI reads are expensive and brittle,
-AI capability outpaces them, and a fundamental limit means no protection is
-permanent. The practical conclusion for defenders is to stop treating compilation
-as secrecy, to protect only what truly must be protected while accepting that
-protection buys time rather than safety, and to consider moving the most valuable
-logic off the shipped binary altogether.
+economics: the defenses that hide the data an AI reads are expensive and brittle, AI
+capability outpaces them, and a fundamental limit means no protection is permanent.
+The practical conclusion for defenders is to stop treating compilation as secrecy, to
+protect only what truly must be protected while accepting that protection buys time
+rather than safety, and to consider moving the most valuable logic off the shipped
+binary altogether.
 
 \appendix[Reproducibility]
 All artifacts are in the project repository. \texttt{build.sh} compiles the twelve
 binaries (four programs, three levels) and prints the behavioral-equivalence check;
 \texttt{analyze.py} regenerates the disassembly, the static and complexity tables,
-and the figure; \texttt{pack.sh} adds an optional UPX packing level on a machine
-where the packer is installed. Every number in Tables~\ref{tab:static}--\ref{tab:recovery}
-is produced by these scripts, so the study can be reproduced end to end from source
-with only \texttt{gcc}, \texttt{binutils}, and Python.
+and the figures; \texttt{pack.sh} adds an optional UPX packing level on a machine
+where the packer is installed. Every number in
+Tables~\ref{tab:static}--\ref{tab:recovery} is produced by these scripts, so the
+study can be reproduced end to end from source with only \texttt{gcc},
+\texttt{binutils}, and Python.
 
 \begin{thebibliography}{00}
 \bibitem{llm4decompile} H.~Tan, Q.~Luo, J.~Li, and Y.~Zhang, ``LLM4Decompile: Decompiling binary code with large language models,'' in \emph{Proc. EMNLP}, 2024. arXiv:2403.05286.
@@ -514,13 +909,19 @@ with only \texttt{gcc}, \texttt{binutils}, and Python.
 \bibitem{empirical} X.~Shang \emph{et al.}, ``An empirical study on the effectiveness of large language models for binary code understanding,'' arXiv:2504.21803, 2025.
 \bibitem{obf-taxonomy} C.~Collberg, C.~Thomborson, and D.~Low, ``A taxonomy of obfuscating transformations,'' Univ.\ Auckland, Tech.\ Rep.\ 148, 1997.
 \bibitem{collberg-tse} C.~Collberg and C.~Thomborson, ``Watermarking, tamper-proofing, and obfuscation: Tools for software protection,'' \emph{IEEE Trans.\ Softw.\ Eng.}, vol.~28, no.~8, 2002.
-\bibitem{protecting-survey} S.~Schrittwieser \emph{et al.}, ``Protecting software through obfuscation: Can it keep pace with progress in code analysis?'' \emph{ACM Computing Surveys}, vol.~49, no.~1, 2016.
+\bibitem{surreptitious} C.~Collberg and J.~Nagra, \emph{Surreptitious Software: Obfuscation, Watermarking, and Tamperproofing for Software Protection}. Addison-Wesley, 2009.
+\bibitem{banescu} S.~Banescu and A.~Pretschner, ``A tutorial on software obfuscation,'' \emph{Advances in Computers}, vol.~108, 2018.
+\bibitem{linn-debray} C.~Linn and S.~Debray, ``Obfuscation of executable code to improve resistance to static disassembly,'' in \emph{Proc. ACM CCS}, 2003.
+\bibitem{wang-tamper} C.~Wang, J.~Hill, J.~Knight, and J.~Davidson, ``Software tamper resistance: Obstructing static analysis of programs,'' Univ.\ Virginia, Tech.\ Rep.\ CS-2000-12, 2000.
 \bibitem{ollvm} P.~Junod, J.~Rinaldini, J.~Wehrli, and J.~Michielin, ``Obfuscator-LLVM: Software protection for the masses,'' in \emph{Proc. IEEE/ACM SPRO}, 2015.
+\bibitem{protecting-survey} S.~Schrittwieser \emph{et al.}, ``Protecting software through obfuscation: Can it keep pace with progress in code analysis?'' \emph{ACM Computing Surveys}, vol.~49, no.~1, 2016.
 \bibitem{udupa} S.~Udupa, S.~Debray, and M.~Madou, ``Deobfuscation: Reverse engineering obfuscated code,'' in \emph{Proc. WCRE}, 2005.
 \bibitem{rolles} R.~Rolles, ``Unpacking virtualization obfuscators,'' in \emph{Proc. USENIX WOOT}, 2009.
+\bibitem{nomoregotos} K.~Yakdan, S.~Eschweiler, E.~Gerhards-Padilla, and M.~Smith, ``No more gotos: Decompilation using pattern-independent control-flow structuring,'' in \emph{Proc. NDSS}, 2015.
 \bibitem{angr} Y.~Shoshitaishvili \emph{et al.}, ``SoK: (State of) the art of war: Offensive techniques in binary analysis,'' in \emph{Proc. IEEE S\&P}, 2016.
 \bibitem{barak} B.~Barak \emph{et al.}, ``On the (im)possibility of obfuscating programs,'' in \emph{Proc. CRYPTO}, 2001.
 \bibitem{ghidra} National Security Agency, ``Ghidra software reverse engineering framework,'' \url{https://ghidra-sre.org}, 2019.
+\bibitem{idabook} C.~Eagle, \emph{The IDA Pro Book}, 2nd~ed. No Starch Press, 2011.
 \end{thebibliography}
 
 \end{document}
