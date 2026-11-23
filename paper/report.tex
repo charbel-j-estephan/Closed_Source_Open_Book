@@ -168,7 +168,7 @@ pointing the pipeline at}, a question of economics rather than skill.
 \node[box, below=of dis] (dec) {Decompiler\\(Ghidra / IDA)};
 \node[box, left=of dec] (nam) {Name-recovery\\model~\cite{gennm,funcname}};
 \node[box, below=of nam] (llm) {LLM reader\\(explain / rename)};
-\node[box, right=of llm] (deob) {Deobfuscation /\\symbolic exec.~\cite{angr,udupa}};
+\node[box, right=of llm] (deob) {Control-flow\\unflattening~\cite{angr,udupa}};
 \node[box, below=of llm, fill=red!8] (out) {Attacker's model:\\purpose + secret};
 \draw[arr] (bin) -- (dis);
 \draw[arr] (dis) -- (dec);
