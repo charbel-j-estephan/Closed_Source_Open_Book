@@ -51,8 +51,13 @@ Method-Opportunity-Motive framework, survey the research landscape, and, as our
 main focus, explain in depth why the industry cannot easily solve the problem. To
 ground the analysis in evidence rather than assertion, we conduct an original,
 reproducible measurement study: four sample programs, each hiding a secret value or
-a secret algorithm, are protected at three cumulative levels and assessed for how
-much of their purpose and secret survive. Across all four, obfuscation cuts mean
+a secret algorithm, are protected at three cumulative levels (unmodified, stripped
+and optimized, and stripped with control-flow flattening, opaque predicates, and
+string encryption) and read by an AI analyst at each level. For every program and
+level, the analyst scores, on a 0-to-5 scale, how much of the program's purpose it
+could state and how much of the hidden secret it could recover, and we average
+these scores across all four programs to give one purpose-recovery and one
+secret-recovery number per level. Across all four programs, obfuscation cuts mean
 purpose recovery from 5.0 to 2.0 out of 5 but cuts secret recovery only from 5.0 to
 3.5, because the defining data constants survive transformations that scramble
 control flow. That gap is the crux of the industry's difficulty: hiding what a
