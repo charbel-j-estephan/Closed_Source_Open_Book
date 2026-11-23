@@ -7,6 +7,8 @@
 \usepackage{listings}
 \usepackage{url}
 \usepackage{booktabs}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta,positioning}
 
 \lstdefinestyle{ccode}{language=C,basicstyle=\ttfamily\scriptsize,breaklines=true,
  frame=single,numbers=left,numberstyle=\tiny\color{gray},
@@ -116,31 +118,127 @@ how capable these models are at understanding real stripped
 code~\cite{howfar,empirical}.
 
 \subsection{A Concrete Attack Pipeline}
-In practice an attacker chains the stages into a near-automatic workflow. The
-target binary is loaded into a decompiler such as Ghidra, which produces
-pseudocode. That pseudocode, often ugly and missing names, is handed to an LLM with
+In practice an attacker chains the stages into a near-automatic workflow, shown in
+Fig.~\ref{fig:pipeline}. The target binary is first loaded into a disassembler and
+then a decompiler such as Ghidra, which lifts raw machine code into C-like
+pseudocode. That pseudocode is usually ugly: variables are named \texttt{v1},
+\texttt{v2}, and so on, and the structure of loops and conditionals may be
+convoluted even when the logic is simple. This pseudocode is handed to an LLM with
 a simple instruction: explain this function, rename the variables, or rewrite it as
-clean C. A name-recovery model labels the stripped functions so the attacker knows
-which to read first. For a protected target, an automated deobfuscation or
-symbolic-execution pass can simplify the control flow before the model sees
-it~\cite{angr,udupa}. Each stage used to be a specialist skill; now each is a tool
-call, and the attacker's main job is to point the pipeline at the right function.
-The significance is not that any single step is novel, but that the chain now runs
-with little expertise and can be scripted across many targets at once.
+clean C. In parallel, a name-recovery model such as GenNm~\cite{gennm} or the
+function-naming systems surveyed in~\cite{funcname} labels every stripped function
+with a plausible name, so the attacker does not have to read the whole binary
+function by function but can instead triage: a function renamed
+\texttt{verify\_license\_key} is read before a function renamed
+\texttt{print\_banner}. For a protected target where control flow has been
+deliberately obscured, an automated deobfuscation or symbolic-execution pass, such
+as the binary-analysis framework angr~\cite{angr} or targeted unflattening and
+unpacking passes~\cite{udupa,rolles}, can simplify the control flow before the
+model ever sees it, effectively undoing part of the defender's work as a
+preprocessing step. The output of this entire chain, clean names, clean pseudocode,
+and a simplified control-flow graph, is then what the attacker's LLM actually
+reasons over, and it is reasoning over something far closer to the original source
+than the raw stripped binary ever was.
+
+Each of these stages used to require a specialist with years of reverse-engineering
+training: a human analyst who could read raw assembly, recognize common compiler
+idioms, and manually rename variables as understanding accumulated. Today each
+stage is a single tool call or API request, chainable in a script that requires
+only that the attacker knows which function to point the model at. The
+significance of this pipeline is therefore not that any single stage is
+individually novel, decompilers and symbolic execution both predate large language
+models by years, but that the chain as a whole now runs end to end with little
+expertise, with each stage's output feeding the next with minimal human
+intervention. This lets the same pipeline be scripted and run across hundreds or
+thousands of target binaries at once, turning what was once a bespoke, one-binary-
+at-a-time craft into something closer to a batch job. The attacker's bottleneck
+shifts from \emph{can I understand this code} to \emph{which binary is worth
+pointing the pipeline at}, a question of economics rather than skill.
+
+\begin{figure}[t]
+\centering
+\begin{tikzpicture}[
+  node distance=0.55cm and 0.4cm,
+  box/.style={draw, rounded corners, align=center, minimum height=0.9cm,
+              minimum width=2.6cm, font=\scriptsize, fill=blue!6},
+  arr/.style={-{Stealth[length=2mm]}, thick}
+]
+\node[box] (bin) {Stripped\\binary};
+\node[box, right=of bin] (dis) {Disassembler\\(objdump)};
+\node[box, below=of dis] (dec) {Decompiler\\(Ghidra / IDA)};
+\node[box, left=of dec] (nam) {Name-recovery\\model~\cite{gennm,funcname}};
+\node[box, below=of nam] (llm) {LLM reader\\(explain / rename)};
+\node[box, right=of llm] (deob) {Deobfuscation /\\symbolic exec.~\cite{angr,udupa}};
+\node[box, below=of llm, fill=red!8] (out) {Attacker's model:\\purpose + secret};
+\draw[arr] (bin) -- (dis);
+\draw[arr] (dis) -- (dec);
+\draw[arr] (dec) -- (nam);
+\draw[arr] (dec) -- (deob);
+\draw[arr] (nam) -- (llm);
+\draw[arr] (deob) -- (llm);
+\draw[arr] (llm) -- (out);
+\end{tikzpicture}
+\caption{The attack pipeline. Each stage, once a specialist skill, is now an
+automated tool call; the attacker's effort shifts from reading assembly to
+choosing which binary and which function to target.}
+\label{fig:pipeline}
+\end{figure}
 
 \subsection{The Four Artifacts That Leak Intent}
-It helps to name what the AI reads, because every protection and every weakness
-discussed later targets one of these. First, \emph{symbols}: the names of functions
-and variables, a labelled map of the program when present. Second, \emph{strings}:
-readable text such as error messages and prompts, which announce intent in plain
-language and are the fastest signal an analyst has. Third, \emph{data constants}:
-the keys, thresholds, and small arithmetic baked into instructions, which define
-what a check accepts or what an algorithm computes. Fourth, the \emph{control-flow
-graph} (CFG): the shape of loops and branches, which when it mirrors the source
-lets a reader follow the logic. Human and AI analysts alike reconstruct a program
-by recovering these four things. Defenders try to remove them; AI makes the removal
-harder to rely on, because models are increasingly good at inferring what stripping
-and light obfuscation try to hide.
+It helps to name precisely what an analyst, human or AI, actually reads when
+reconstructing a program, because every protection discussed later in this report,
+and every weakness we measure in Section~\ref{sec:study}, is best understood as an
+attempt to remove or distort one of four specific artifacts.
+
+First, \emph{symbols}: the names of functions and variables. A compiler does not
+need \texttt{verify\_password} to be called anything in particular, but when
+debug information or an unstripped binary preserves that name, it hands the
+analyst a labelled map of the program for free. Stripping removes this map
+entirely, which is why stripping is the single most common and cheapest defensive
+step, but it is also exactly the artifact that name-recovery models such as
+GenNm~\cite{gennm} and domain-adapted function-naming systems~\cite{funcname} are
+built to reconstruct, turning an anonymous \texttt{sub\_401020} back into something
+close to its original, meaningful name.
+
+Second, \emph{strings}: readable text embedded in the binary, such as error
+messages, log prompts, format strings, and usage text. Strings are the fastest
+signal an analyst has because they require no reverse engineering at all, a plain
+\texttt{strings} dump of the binary often reveals \texttt{"invalid license key"} or
+\texttt{"access denied: insufficient permissions"} directly in plain text,
+immediately telling the reader what a nearby block of code is checking before a
+single instruction is disassembled. This is precisely why our own protected
+samples encrypt their output strings (Section~\ref{sec:study}).
+
+Third, \emph{data constants}: the keys, thresholds, magic numbers, and small
+arithmetic literals baked directly into instructions, which define what a check
+accepts, what a cryptographic routine computes, or where a buffer boundary lies.
+Unlike symbols and strings, these constants are load-bearing for the program's
+correctness, a license check that compares against the value 0x3F7 cannot be
+stripped of that value without breaking the check itself, so this artifact is
+structurally the hardest of the four to hide, a point our measurement study
+confirms empirically.
+
+Fourth, the \emph{control-flow graph} (CFG): the shape of the program's loops,
+branches, and function calls. When a decompiled CFG mirrors the structure of the
+original source, a simple \texttt{if}/\texttt{else} or a \texttt{for} loop, a
+reader can follow the logic almost as if reading the source directly. Defenses
+such as control-flow flattening deliberately destroy this correspondence by
+routing every basic block through a single dispatcher, so that the decompiled
+output shows a flat \texttt{switch} statement with no visible loop or branch
+structure at all, even though the underlying computation is unchanged.
+
+Human and AI analysts alike reconstruct a program's purpose and its secrets by
+recovering some combination of these four artifacts; a reverse-engineering task
+is, in this framing, nothing more than an attempt to recover as many of the four
+as the defender has not successfully destroyed. Defenders therefore try to remove
+or scramble all four at once: strip the symbols, encrypt the strings, flatten the
+control flow, and, where feasible, obfuscate the constants themselves. What AI
+changes is not which artifacts matter, the four are the same four a human analyst
+has always relied on, but how reliably each one can be recovered even after a
+defender has tried to remove it, because models trained on millions of
+non-obfuscated programs are increasingly good at inferring plausible names and
+structure from indirect cues that a human analyst would find too subtle or
+time-consuming to pursue.
 
 \subsection{Why LLMs Are Suited to Reading Code}
 Code is unusually well matched to language models. It is highly structured, follows
